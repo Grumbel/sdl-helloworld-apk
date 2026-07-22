@@ -1,0 +1,107 @@
+# HelloWorld (SDL2 + C++) for Fire HD 10 (Gen7) — Fire OS 5 / Android 5.1 (API 22)
+
+A minimal SDL2 + C++ Android app — a fullscreen window with a bouncing
+rectangle, touch/back-button handling, and an SDL_Log greeting — built
+reproducibly from a Nix flake with `ndk-build` (no Gradle, no Android Studio).
+
+## Layout
+
+```
+flake.nix
+keystore/debug.keystore                  (fixed signing key, included)
+src/AndroidManifest.xml                  (points at org.libsdl.app.SDLActivity)
+src/jni/Android.mk                       (top-level ndk-build entry point)
+src/jni/Application.mk                   (ABI / platform / STL settings)
+src/jni/src/Android.mk                   (our "main" native module)
+src/jni/src/main.cpp                     (the actual app, in C++)
+```
+
+`src/jni/SDL` is *not* checked in — it's the SDL2 2.30.3 release source,
+fetched and unpacked at build time by the flake (pinned by hash, so it's
+still fully reproducible). Its `android-project/.../org/libsdl/app/*.java`
+files (SDLActivity and friends) are compiled in verbatim; this app has no
+custom Java code at all — `AndroidManifest.xml` launches `SDLActivity`
+directly, which loads `libSDL2.so` and `libmain.so` and calls our `main()`
+(renamed to `SDL_main` under the hood) via JNI.
+
+## Build
+
+Requires Nix with flakes enabled. On first build, Nix downloads the Android
+SDK platform 22/26, build-tools 30.0.3, and NDK 23.1.7779620 (all as
+hash-pinned fixed-output derivations), plus the SDL2 2.30.3 source tarball.
+
+```bash
+nix build
+# -> result/helloworld.apk
+```
+
+## Install
+
+```bash
+nix run .#install        # uses adb install -r
+# or manually:
+adb install -r result/helloworld.apk
+```
+
+Enable Developer Options on the tablet (tap "Serial Number" 7x in
+Settings > Device Options), turn on ADB debugging, and allow installs from
+unknown sources / ADB.
+
+## What the app does
+
+- Opens a fullscreen SDL2 window + accelerated renderer (GLES2 backend).
+- Logs `"Hello, World! from SDL2 + C++ on Android"` via `SDL_Log`
+  (visible with `adb logcat -s SDL`).
+- Animates a bouncing rectangle to prove the render loop is alive.
+- Logs touch coordinates on finger-down.
+- Exits cleanly on the Android back button or `SDL_QUIT`.
+
+## Design notes / why things are set up this way
+
+- **Target ABI**: only `arm64-v8a` is built. The Fire HD 10 Gen7 uses a
+  64-bit MediaTek MT8173 SoC, so this is the only ABI that's actually
+  needed. Add `armeabi-v7a` to `APP_ABI` in `src/jni/Application.mk` (and to
+  the `cp`/packaging step in `flake.nix`) if you want broader device
+  coverage from the same flake.
+- **`compilePlatform = "26"` vs `packagePlatform = "22"`**: SDLActivity.java
+  references API 23–26 symbols (e.g. `PointerIcon`, `UiModeManager`
+  Dex/DeX-mode checks), all correctly guarded at runtime behind
+  `Build.VERSION.SDK_INT` checks. It only needs a *newer platform jar on the
+  javac classpath* to resolve those symbols at compile time; the actual APK
+  still declares `minSdkVersion=21` / `targetSdkVersion=22` and only ever
+  exercises the guarded, API-22-safe code paths on the Fire tablet.
+- **Fixed signing key**: as before, `keystore/debug.keystore` is a
+  committed, fixed key so the app's signature — and therefore its ability
+  to reinstall over a previous build — stays stable across rebuilds.
+- **`ndk-build` over CMake**: SDL2 ships both, but `ndk-build` with
+  `Android.mk`/`Application.mk` is the toolchain SDL2's own Android project
+  template is built around, and it composes cleanly with plain shell/Nix
+  without pulling in Gradle.
+
+## Caveats
+
+- This flake was authored and carefully checked against SDL2's actual
+  source tree and nixpkgs' `androidenv` API, but **not build-executed
+  end-to-end** in the environment that produced it (no network access to
+  Android's SDK/NDK distribution servers there). The SDL2 source hash *was*
+  verified against a real download. If `nix build` hits a snag, the most
+  likely spots are: the `ndk-bundle` symlink name (check
+  `$ANDROID_HOME/ndk` if `ndk-bundle` isn't present for your nixpkgs
+  revision) or minor `aapt`/`d8` flag differences across build-tools
+  versions.
+- Exact byte-for-byte APK reproducibility isn't guaranteed (legacy
+  `aapt`/`zipalign` embed zip timestamps rather than honoring
+  `SOURCE_DATE_EPOCH`) — app content, native code, and signing key are all
+  still fully deterministic.
+
+## Regenerating the keystore (only if you want a different key)
+
+```bash
+keytool -genkeypair -v \
+  -keystore keystore/debug.keystore -storepass android -keypass android \
+  -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+  -dname "CN=Android Debug,O=Android,C=US"
+```
+
+Then `git add -f keystore/debug.keystore` — flakes only see files known to
+git (`git add` alone is enough, no commit required).
