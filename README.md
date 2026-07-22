@@ -63,13 +63,15 @@ unknown sources / ADB.
   needed. Add `armeabi-v7a` to `APP_ABI` in `src/jni/Application.mk` (and to
   the `cp`/packaging step in `flake.nix`) if you want broader device
   coverage from the same flake.
-- **`compilePlatform = "26"` vs `packagePlatform = "22"`**: SDLActivity.java
-  references API 23–26 symbols (e.g. `PointerIcon`, `UiModeManager`
-  Dex/DeX-mode checks), all correctly guarded at runtime behind
-  `Build.VERSION.SDK_INT` checks. It only needs a *newer platform jar on the
-  javac classpath* to resolve those symbols at compile time; the actual APK
-  still declares `minSdkVersion=21` / `targetSdkVersion=22` and only ever
-  exercises the guarded, API-22-safe code paths on the Fire tablet.
+- **`compilePlatform = "33"` vs `packagePlatform = "22"`**: SDL's Java glue
+  (`SDLActivity`, `HIDDeviceManager`, `SDLControllerManager`, etc.)
+  references symbols up to API 31 — e.g. `PointerIcon` (24),
+  `Manifest.permission.BLUETOOTH_CONNECT` (31) — all correctly guarded at
+  runtime behind `Build.VERSION.SDK_INT` checks. They just need a *newer
+  platform jar on the javac classpath* to resolve at compile time; the
+  actual APK still declares `minSdkVersion=21` / `targetSdkVersion=22` and
+  only ever exercises the guarded, API-22-safe code paths on the Fire
+  tablet.
 - **Fixed signing key**: as before, `keystore/debug.keystore` is a
   committed, fixed key so the app's signature — and therefore its ability
   to reinstall over a previous build — stays stable across rebuilds.

@@ -14,8 +14,9 @@
 
       buildToolsVersion = "30.0.3";
       packagePlatform = "22"; # matches Fire OS 5 / Android 5.1 exactly
-      compilePlatform = "26"; # SDLActivity.java references API 24-26 symbols
-                               # behind SDK_INT guards; only needed at javac time
+      compilePlatform = "33"; # SDL's Java glue (SDLActivity, HIDDeviceManager, etc.)
+                               # references symbols up to API 31 (e.g. BLUETOOTH_CONNECT)
+                               # behind SDK_INT/permission guards; only needed at javac time
       ndkVersion = "23.1.7779620";
       appName = "helloworld";
       targetAbi = "arm64-v8a"; # Fire HD 10 Gen7 is arm64 (MediaTek MT8173)
@@ -76,7 +77,7 @@
 
           # --- compile the SDL Java glue classes ---
           mkdir -p classes
-          javac -source 8 -target 8 -bootclasspath "$COMPILE_JAR" -d classes \
+          javac -encoding UTF-8 --release 8 -classpath "$COMPILE_JAR" -d classes \
             $(find javasrc -name '*.java')
 
           $BT/d8 --output classes --min-api ${packagePlatform} $(find classes -name '*.class')
