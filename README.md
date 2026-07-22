@@ -58,11 +58,13 @@ unknown sources / ADB.
 
 ## Design notes / why things are set up this way
 
-- **Target ABI**: only `arm64-v8a` is built. The Fire HD 10 Gen7 uses a
-  64-bit MediaTek MT8173 SoC, so this is the only ABI that's actually
-  needed. Add `armeabi-v7a` to `APP_ABI` in `src/jni/Application.mk` (and to
-  the `cp`/packaging step in `flake.nix`) if you want broader device
-  coverage from the same flake.
+- **Target ABIs**: both `armeabi-v7a` and `arm64-v8a` are built. The Fire HD
+  10 Gen7's MediaTek MT8173 SoC is 64-bit, but Fire OS commonly ships a
+  32-bit userland even on 64-bit hardware — `adb shell getprop
+  ro.product.cpu.abilist` often reports `armeabi-v7a,armeabi` only, in which
+  case `INSTALL_FAILED_NO_MATCHING_ABIS` is what you'll see from an
+  arm64-only build. Building both and letting the package manager pick
+  avoids needing to know which one in advance.
 - **`compilePlatform = "33"` vs `packagePlatform = "22"`**: SDL's Java glue
   (`SDLActivity`, `HIDDeviceManager`, `SDLControllerManager`, etc.)
   references symbols up to API 31 — e.g. `PointerIcon` (24),

@@ -19,7 +19,10 @@
                                # behind SDK_INT/permission guards; only needed at javac time
       ndkVersion = "23.1.7779620";
       appName = "helloworld";
-      targetAbi = "arm64-v8a"; # Fire HD 10 Gen7 is arm64 (MediaTek MT8173)
+      targetAbis = [ "armeabi-v7a" "arm64-v8a" ]; # Fire tablets often run a 32-bit
+                                                   # userland even on 64-bit SoCs like
+                                                   # the Gen7's MT8173, so build both
+                                                   # and let the installer pick.
 
       sdlVersion = "2.30.3";
       sdlSrc = pkgs.fetchurl {
@@ -91,8 +94,10 @@
 
           # --- add dex + native libraries ---
           cp classes/classes.dex out/classes.dex
-          mkdir -p out/lib/${targetAbi}
-          cp src/libs/${targetAbi}/*.so out/lib/${targetAbi}/
+          for abi in ${pkgs.lib.concatStringsSep " " targetAbis}; do
+            mkdir -p out/lib/$abi
+            cp src/libs/$abi/*.so out/lib/$abi/
+          done
 
           ( cd out && $BT/aapt add base.apk classes.dex )
           ( cd out && zip -r base.apk lib )
