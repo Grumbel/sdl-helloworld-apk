@@ -1,5 +1,5 @@
 {
-  description = "Reproducible SDL2 + C++ HelloWorld APKs for Fire HD 10 Gen7 (Fire OS 5 / Android 5.1, API 22): a plain SDL_Renderer app and an OpenGL ES app, sharing a single Nix build pipeline";
+  description = "Reproducible SDL2 + C++ HelloWorld APKs for Fire HD 10 Gen7 (Fire OS 5 / Android 5.1, API 22): a plain SDL_Renderer app and an OpenGL ES app, sharing a single Nix build pipeline and a prebuilt SDL2 native/Java layer";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
@@ -52,11 +52,91 @@
         else "00000000";
 
       # ---------------------------------------------------------------
+      # SDL2 itself, built exactly once (per Nix store, cached across both
+      # apps and across repeated app rebuilds): the native libSDL2.so per
+      # ABI, its headers, and the compiled SDLActivity Java glue
+      # (identical for every SDL2-based app — nothing app-specific here).
+      # This is the expensive part of the whole pipeline (~150 C source
+      # files x 2 ABIs), so pulling it out of mkApk means editing a
+      # single app's main.cpp never triggers a full SDL2 recompile again.
+      # ---------------------------------------------------------------
+      sdlAndroidLibs = pkgs.stdenvNoCC.mkDerivation {
+        pname = "sdl2-android-libs";
+        version = sdlVersion;
+
+        dontUnpack = true;
+        nativeBuildInputs = [ androidSdk pkgs.jdk17 pkgs.gnumake ];
+
+        buildPhase = ''
+          runHook preBuild
+
+          export ANDROID_HOME=${androidSdk}/libexec/android-sdk
+          NDK=$ANDROID_HOME/ndk-bundle
+          BT=$ANDROID_HOME/build-tools/${buildToolsVersion}
+          COMPILE_JAR=$ANDROID_HOME/platforms/android-${compilePlatform}/android.jar
+
+          mkdir -p work
+          tar xzf ${sdlSrc} -C work
+          mkdir -p sdl-jni
+          mv work/SDL2-${sdlVersion} sdl-jni/SDL
+          cp ${./common/jni/Application.mk} sdl-jni/Application.mk
+          cp ${./common/jni/Android.mk} sdl-jni/Android.mk
+          chmod -R u+w sdl-jni
+
+          # Builds just SDL2 itself (module "SDL2") — no app module present,
+          # so there's nothing here for an app's own main.cpp to interfere
+          # with or trigger a rebuild of.
+          $NDK/ndk-build \
+            NDK_PROJECT_PATH=$PWD/sdl-jni \
+            APP_BUILD_SCRIPT=$PWD/sdl-jni/Android.mk \
+            NDK_APPLICATION_MK=$PWD/sdl-jni/Application.mk \
+            -j"$NIX_BUILD_CORES"
+
+          mkdir -p javasrc
+          cp -r sdl-jni/SDL/android-project/app/src/main/java/org javasrc/org
+          chmod -R u+w javasrc
+
+          mkdir -p classes
+          javac -encoding UTF-8 --release 8 -classpath "$COMPILE_JAR" -d classes \
+            $(find javasrc -name '*.java')
+          $BT/d8 --output classes --min-api ${packagePlatform} $(find classes -name '*.class')
+
+          runHook postBuild
+        '';
+
+        installPhase = ''
+          mkdir -p $out/lib $out/dex
+          for abi in ${pkgs.lib.concatStringsSep " " targetAbis}; do
+            mkdir -p $out/lib/$abi
+            cp sdl-jni/libs/$abi/*.so $out/lib/$abi/
+          done
+          cp -r sdl-jni/SDL/include $out/include
+          cp classes/classes.dex $out/dex/classes.dex
+        '';
+      };
+
+      # A drop-in replacement for the real SDL2 source dir, as far as an
+      # app's own jni/Android.mk is concerned: same "SDL2" module name, same
+      # ../SDL/include path — just backed by sdlAndroidLibs' prebuilt .so
+      # instead of full source, via ndk-build's PREBUILT_SHARED_LIBRARY.
+      # No changes needed in either app's own jni/Android.mk for this.
+      sdlPrebuiltAndroidMk = pkgs.writeTextFile {
+        name = "SDL2-prebuilt-Android.mk";
+        text = ''
+          LOCAL_PATH := $(call my-dir)
+          include $(CLEAR_VARS)
+          LOCAL_MODULE := SDL2
+          LOCAL_SRC_FILES := ${sdlAndroidLibs}/lib/$(TARGET_ARCH_ABI)/libSDL2.so
+          include $(PREBUILT_SHARED_LIBRARY)
+        '';
+      };
+
+      # ---------------------------------------------------------------
       # Shared build pipeline for any SDL2-based app in ./apps/<name>/:
       #   AndroidManifest.xml, jni/Android.mk (native module), main.cpp
-      # Everything else (SDK/NDK setup, fetching + vendoring SDL2's own
-      # Java glue, javac/d8/aapt/zipalign/apksigner, ABI packaging) is
-      # identical across apps and lives here once.
+      # Everything else (SDK/NDK setup, linking the prebuilt SDL2 layer,
+      # aapt/zipalign/apksigner, ABI packaging) is identical across apps
+      # and lives here once.
       # ---------------------------------------------------------------
       mkApk = { appName, appDir }:
         pkgs.stdenvNoCC.mkDerivation {
@@ -73,42 +153,29 @@
             NDK=$ANDROID_HOME/ndk-bundle
             BT=$ANDROID_HOME/build-tools/${buildToolsVersion}
             PACKAGE_JAR=$ANDROID_HOME/platforms/android-${packagePlatform}/android.jar
-            COMPILE_JAR=$ANDROID_HOME/platforms/android-${compilePlatform}/android.jar
 
-            mkdir -p src/jni/src
+            mkdir -p src/jni/src src/jni/SDL
             cp ${./common/jni/Application.mk} src/jni/Application.mk
             cp ${./common/jni/Android.mk} src/jni/Android.mk
             cp ${appDir}/jni/Android.mk src/jni/src/Android.mk
             cp ${appDir}/main.cpp src/jni/src/main.cpp
             cp ${appDir}/AndroidManifest.xml src/AndroidManifest.xml
             cp -r ${appDir}/res src/res
+            cp ${sdlPrebuiltAndroidMk} src/jni/SDL/Android.mk
+            cp -r ${sdlAndroidLibs}/include src/jni/SDL/include
             chmod -R u+w src
 
             cp ${./keystore/debug.keystore} debug.keystore
 
-            # --- unpack SDL2 and vendor it into the ndk-build project tree ---
-            mkdir -p work
-            tar xzf ${sdlSrc} -C work
-            mv work/SDL2-${sdlVersion} src/jni/SDL
-
-            # --- copy SDL's own Java glue (SDLActivity et al.) verbatim ---
-            mkdir -p javasrc
-            cp -r src/jni/SDL/android-project/app/src/main/java/org javasrc/org
-            chmod -R u+w javasrc
-
-            # --- native build via ndk-build ---
+            # --- native build: only the app's own main.cpp actually
+            # compiles here; SDL2 is linked as a prebuilt .so (see
+            # sdlAndroidLibs above) and just gets copied into libs/<abi>/
+            # by ndk-build's install step, same as libc++_shared.so ---
             $NDK/ndk-build \
               NDK_PROJECT_PATH=$PWD/src \
               APP_BUILD_SCRIPT=$PWD/src/jni/Android.mk \
               NDK_APPLICATION_MK=$PWD/src/jni/Application.mk \
               -j"$NIX_BUILD_CORES"
-
-            # --- compile the SDL Java glue classes ---
-            mkdir -p classes
-            javac -encoding UTF-8 --release 8 -classpath "$COMPILE_JAR" -d classes \
-              $(find javasrc -name '*.java')
-
-            $BT/d8 --output classes --min-api ${packagePlatform} $(find classes -name '*.class')
 
             # --- package resources + manifest ---
             mkdir -p out
@@ -118,8 +185,10 @@
               -I "$PACKAGE_JAR" \
               -F out/base.apk
 
-            # --- add dex + native libraries ---
-            cp classes/classes.dex out/classes.dex
+            # --- add dex (the SDLActivity glue, prebuilt by sdlAndroidLibs
+            # and identical for every app — no javac/d8 needed here) and
+            # native libraries ---
+            cp ${sdlAndroidLibs}/dex/classes.dex out/classes.dex
             for abi in ${pkgs.lib.concatStringsSep " " targetAbis}; do
               mkdir -p out/lib/$abi
               cp src/libs/$abi/*.so out/lib/$abi/
@@ -156,7 +225,7 @@
       hellosdl = mkApk { appName = "hellosdl"; appDir = ./apps/hellosdl; };
     in {
       packages.${system} = {
-        inherit hellogl hellosdl;
+        inherit hellogl hellosdl sdlAndroidLibs;
         default = hellogl;
       };
 

@@ -8,11 +8,15 @@ flake with `ndk-build` (no Gradle, no Android Studio):
   adapts), a spinning, bouncing, per-vertex-colored cube.
 
 They're built from one flake because the actual complexity here — Android
-SDK/NDK setup, fetching and vendoring SDL2's own Java glue
-(`SDLActivity` & friends), the `javac`/`d8`/`aapt`/`zipalign`/`apksigner`
-pipeline, multi-ABI packaging — is identical between them and lives in one
-shared Nix function. Only `AndroidManifest.xml`, the native module's
-`Android.mk`, and `main.cpp` differ per app.
+SDK/NDK setup, compiling SDL2 itself and its Java glue
+(`SDLActivity` & friends), the `aapt`/`zipalign`/`apksigner` pipeline,
+multi-ABI packaging — is identical between them and lives in one shared
+Nix build. SDL2's own compile (the expensive part: ~150 C source files ×
+2 ABIs, plus its Java glue) is further factored into its own cached
+derivation, `sdlAndroidLibs`, built once and reused as a **prebuilt**
+library by both apps — editing just `main.cpp` in either app never
+triggers a full SDL2 recompile. Only `AndroidManifest.xml`, the native
+module's `Android.mk`, and `main.cpp` differ per app.
 
 ## Layout
 
@@ -31,13 +35,17 @@ apps/hellogl/main.cpp                (raw GL, spinning/bouncing cube)
 apps/hellogl/res/mipmap-*dpi/ic_launcher.png   (launcher icon, 5 densities)
 ```
 
-`src/jni/SDL` is *not* checked in for either app — it's the SDL2 2.30.3
-release source, fetched and unpacked at build time by the flake (pinned
-by hash, so it's still fully reproducible, and only downloaded once —
-Nix caches it and reuses the same store path for both apps' builds). Its
-`android-project/.../org/libsdl/app/*.java` files (`SDLActivity` and
-friends) are compiled in verbatim for both apps; neither has any custom
-Java code — each `AndroidManifest.xml` launches `SDLActivity` directly.
+SDL2's C source and Java glue aren't checked in either — the flake fetches
+the SDL2 2.30.3 release source (pinned by hash) and builds it once, as its
+own `sdlAndroidLibs` derivation (`nix build .#sdlAndroidLibs` to build/
+inspect it standalone). Both apps then link against its `libSDL2.so` as a
+**prebuilt** library (`ndk-build`'s `PREBUILT_SHARED_LIBRARY`) instead of
+recompiling SDL2's ~150 C source files themselves, and reuse its
+already-compiled `classes.dex` for `SDLActivity` and friends
+(`android-project/.../org/libsdl/app/*.java`, compiled in verbatim, no
+custom Java code in either app) instead of re-running `javac`/`d8`. Nix
+caches `sdlAndroidLibs` independently of both apps, so editing just
+`main.cpp` in either one never triggers a full SDL2 rebuild.
 
 **Both apps have distinct package/application IDs** (`com.example.hellosdl`
 / `com.example.hellogl`) so they can be installed side by side on the same
@@ -47,8 +55,8 @@ device rather than overwriting each other.
 
 Requires Nix with flakes enabled. On first build, Nix downloads the Android
 SDK platform 22/26, build-tools 30.0.3, and NDK 23.1.7779620 (all as
-hash-pinned fixed-output derivations), plus the SDL2 2.30.3 source tarball
-(shared between both apps).
+hash-pinned fixed-output derivations), plus the SDL2 2.30.3 source tarball,
+and builds `sdlAndroidLibs` once (shared/cached across both apps below).
 
 ```bash
 nix build .#hellosdl
@@ -115,6 +123,24 @@ support ES 2.0, despite the GX6250 GPU's on-paper ES 3.1 capability —
 
 ## Design notes / why things are set up this way
 
+- **SDL2 as its own cached derivation (`sdlAndroidLibs`), linked as a
+  prebuilt library**: SDL2's C compile is by far the most expensive part
+  of this whole pipeline, and its output (native libs, headers, compiled
+  Java glue) is 100% identical between `hellosdl` and `hellogl` — there's
+  nothing app-specific in it. `sdlAndroidLibs` builds it exactly once
+  (both ABIs, plus `javac`/`d8` on `SDLActivity` et al.) and exposes
+  `lib/<abi>/libSDL2.so`, `include/`, and `dex/classes.dex`. Each app's
+  own `mkApk` build then generates a small `Android.mk` for the `SDL2`
+  module using `include $(PREBUILT_SHARED_LIBRARY)` instead of building
+  it from source — a standard `ndk-build` mechanism — pointing straight
+  at that already-built `.so`. `ndk-build` still copies it into the app's
+  own `libs/<abi>/` as part of its normal install step (same as it
+  already did for `libc++_shared.so`), so the final APK is unaffected;
+  only the *compiling* is skipped. The app's own `Android.mk` files don't
+  change at all for this — they still just say
+  `LOCAL_SHARED_LIBRARIES := SDL2`. Net effect: `nix build .#hellogl`
+  after only touching `apps/hellogl/main.cpp` recompiles just that one
+  file, not all of SDL2.
 - **Launcher icons**: plain legacy PNG mipmaps at the five standard density
   buckets (`mdpi` 48px, `hdpi` 72px, `xhdpi` 96px, `xxhdpi` 144px,
   `xxxhdpi` 192px), downscaled once per bucket directly from each
