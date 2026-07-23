@@ -3,7 +3,8 @@
 Two small SDL2 + C++ Android apps, built reproducibly from a single Nix
 flake with `ndk-build` (no Gradle, no Android Studio):
 
-- **`hellosdl`** — plain `SDL_Renderer`, a bouncing colored rectangle.
+- **`hellosdl`** — plain `SDL_Renderer`, a bouncing colored rectangle plus
+  a mouse-cursor square and a colored square per active multi-touch point.
 - **`hellogl`** — raw OpenGL ES (tries 3.1 → 3.0 → 2.0 at runtime and
   adapts), a spinning, bouncing, per-vertex-colored cube.
 
@@ -83,8 +84,15 @@ unknown sources / ADB.
 ## What each app does
 
 **`hellosdl`**: opens a fullscreen `SDL_Renderer` (accelerated), logs a
-greeting via `SDL_Log`, animates a bouncing rectangle, logs touch
-coordinates on finger-down, exits cleanly on back button / `SDL_QUIT`.
+greeting via `SDL_Log`, animates a bouncing rectangle. On top of that:
+tracks the mouse cursor (a white square follows `SDL_MOUSEMOTION`) and
+every simultaneously active touch point (`SDL_FINGERDOWN`/`FINGERMOTION`/
+`FINGERUP`, up to 10 at once, each drawn as its own colored square, color
+picked by touch slot so multiple fingers stay visually distinct). Touch↔
+mouse event synthesis is turned off (`SDL_HINT_TOUCH_MOUSE_EVENTS` /
+`SDL_HINT_MOUSE_TOUCH_EVENTS`) so the two stay independent instead of a
+touch also puppeting the mouse square. Logs finger down/up events, exits
+cleanly on back button / `SDL_QUIT`.
 
 **`hellogl`**: opens a fullscreen window with a direct OpenGL ES context —
 tries 3.1, then 3.0, then 2.0 at runtime, using whichever this particular
