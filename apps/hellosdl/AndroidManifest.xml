@@ -11,7 +11,7 @@
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
-    <application android:label="HelloSDL" android:allowBackup="false" android:hasCode="true">
+    <application android:label="HelloSDL" android:icon="@mipmap/ic_launcher" android:allowBackup="false" android:hasCode="true">
         <activity android:name="org.libsdl.app.SDLActivity"
             android:label="HelloSDL"
             android:configChanges="orientation|keyboardHidden|screenSize"

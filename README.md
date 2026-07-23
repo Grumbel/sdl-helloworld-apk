@@ -24,9 +24,11 @@ common/jni/Android.mk                (shared: ndk-build entry point)
 apps/hellosdl/AndroidManifest.xml
 apps/hellosdl/jni/Android.mk         (native module: no GLESv3 needed)
 apps/hellosdl/main.cpp               (SDL_Renderer bouncing rectangle)
+apps/hellosdl/res/mipmap-*dpi/ic_launcher.png  (launcher icon, 5 densities)
 apps/hellogl/AndroidManifest.xml
 apps/hellogl/jni/Android.mk          (native module: links GLESv3)
 apps/hellogl/main.cpp                (raw GL, spinning/bouncing cube)
+apps/hellogl/res/mipmap-*dpi/ic_launcher.png   (launcher icon, 5 densities)
 ```
 
 `src/jni/SDL` is *not* checked in for either app — it's the SDL2 2.30.3
@@ -113,6 +115,17 @@ support ES 2.0, despite the GX6250 GPU's on-paper ES 3.1 capability —
 
 ## Design notes / why things are set up this way
 
+- **Launcher icons**: plain legacy PNG mipmaps at the five standard density
+  buckets (`mdpi` 48px, `hdpi` 72px, `xhdpi` 96px, `xxhdpi` 144px,
+  `xxxhdpi` 192px), downscaled once per bucket directly from each
+  source image (no upscaling — sources were already ≥323px). No adaptive
+  icon (`<adaptive-icon>` XML, separate foreground/background layers) is
+  used, since that's an API 26+ feature and this app targets API 22; a
+  single flat PNG per density is exactly what Android 5.1 expects. This
+  is also why `aapt package` now gets a `-S src/res` flag — previously
+  there were no resources at all (no `res/` dir existed), so the manifest
+  couldn't reference `@mipmap/ic_launcher` until resource compilation was
+  wired in.
 - **One shared `mkApk` Nix function, two `apps/<name>/` directories**:
   the SDK/NDK/SDL/javac/dex/packaging pipeline is ~90% of the total
   complexity and completely identical between the two apps; only

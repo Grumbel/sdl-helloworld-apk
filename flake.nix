@@ -81,6 +81,7 @@
             cp ${appDir}/jni/Android.mk src/jni/src/Android.mk
             cp ${appDir}/main.cpp src/jni/src/main.cpp
             cp ${appDir}/AndroidManifest.xml src/AndroidManifest.xml
+            cp -r ${appDir}/res src/res
             chmod -R u+w src
 
             cp ${./keystore/debug.keystore} debug.keystore
@@ -113,6 +114,7 @@
             mkdir -p out
             $BT/aapt package -f \
               -M src/AndroidManifest.xml \
+              -S src/res \
               -I "$PACKAGE_JAR" \
               -F out/base.apk
 
