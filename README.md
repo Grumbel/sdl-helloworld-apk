@@ -32,7 +32,7 @@ hash-pinned fixed-output derivations), plus the SDL2 2.30.3 source tarball.
 
 ```bash
 nix build
-# -> result/helloworld.apk
+# -> result/hellogl-<YYYYMMDD>-<gitshortrev>.apk
 ```
 
 ## Install
@@ -40,7 +40,7 @@ nix build
 ```bash
 nix run .#install        # uses adb install -r
 # or manually:
-adb install -r result/helloworld.apk
+adb install -r result/hellogl-*.apk
 ```
 
 Enable Developer Options on the tablet (tap "Serial Number" 7x in
@@ -64,6 +64,14 @@ unknown sources / ADB.
 
 ## Design notes / why things are set up this way
 
+- **Output filename**: `hellogl-<YYYYMMDD>-<gitshortrev>.apk`. The date and
+  rev come from the flake's own git metadata (`self.shortRev` /
+  `self.dirtyShortRev`, `self.lastModifiedDate`) — the *commit's* date, not
+  wall-clock build time — so the name stays reproducible for a given
+  commit. This needs at least one commit in the repo (`git commit`, not
+  just `git add`); with no commits yet, or with uncommitted changes, you'll
+  get a `-dirty` suffix on the rev (or `nogit` if there's no git history at
+  all) instead of a clean short hash.
 - **Target ABIs**: both `armeabi-v7a` and `arm64-v8a` are built. The Fire HD
   10 Gen7's MediaTek MT8173 SoC is 64-bit, but Fire OS commonly ships a
   32-bit userland even on 64-bit hardware — `adb shell getprop
@@ -114,4 +122,7 @@ keytool -genkeypair -v \
 ```
 
 Then `git add -f keystore/debug.keystore` — flakes only see files known to
-git (`git add` alone is enough, no commit required).
+git. A plain `git add` (no commit) is enough for `nix build` itself to
+work, but you'll want an actual `git commit` too if you want a clean
+`gitshortrev` in the output filename rather than a `-dirty`/`nogit`
+fallback (see "Output filename" above).

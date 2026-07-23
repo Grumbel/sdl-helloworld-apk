@@ -18,11 +18,24 @@
                                # references symbols up to API 31 (e.g. BLUETOOTH_CONNECT)
                                # behind SDK_INT/permission guards; only needed at javac time
       ndkVersion = "23.1.7779620";
-      appName = "helloworld";
+      appName = "hellogl";
       targetAbis = [ "armeabi-v7a" "arm64-v8a" ]; # Fire tablets often run a 32-bit
                                                    # userland even on 64-bit SoCs like
                                                    # the Gen7's MT8173, so build both
                                                    # and let the installer pick.
+
+      # Git metadata for the output filename, derived from the flake's own
+      # source (not wall-clock build time, so the name stays reproducible
+      # for a given commit). Needs at least one commit in the repo — see
+      # README. Falls back gracefully for an uncommitted/dirty tree.
+      gitRev =
+        if self ? shortRev then self.shortRev
+        else if self ? dirtyShortRev then self.dirtyShortRev
+        else "nogit";
+      gitDate =
+        if self ? lastModifiedDate then builtins.substring 0 8 self.lastModifiedDate
+        else "00000000";
+      outApkName = "${appName}-${gitDate}-${gitRev}.apk";
 
       sdlVersion = "2.30.3";
       sdlSrc = pkgs.fetchurl {
@@ -115,14 +128,14 @@
 
         installPhase = ''
           mkdir -p $out
-          cp out/${appName}.apk $out/
+          cp out/${appName}.apk $out/${outApkName}
         '';
       };
 
       apps.${system}.install = {
         type = "app";
         program = toString (pkgs.writeShellScript "adb-install" ''
-          exec ${pkgs.android-tools}/bin/adb install -r ${self.packages.${system}.default}/${appName}.apk
+          exec ${pkgs.android-tools}/bin/adb install -r ${self.packages.${system}.default}/${outApkName}
         '');
       };
     };

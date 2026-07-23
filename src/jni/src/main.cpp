@@ -165,7 +165,7 @@ int main(int argc, char *argv[]) {
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
     SDL_Window *window = SDL_CreateWindow(
-        "HelloSDL",
+        "HelloGL",
         SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
         0, 0,
         SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_SHOWN);
