@@ -234,6 +234,11 @@ int main(int argc, char *argv[]) {
     bool haveES3 = (gotMajor >= 3);
     SDL_GL_SetSwapInterval(1); // vsync paces the loop
 
+    SDL_Log("GL_VERSION: %s", glGetString(GL_VERSION));
+    SDL_Log("GL_RENDERER: %s", glGetString(GL_RENDERER));
+    SDL_Log("GL_VENDOR: %s", glGetString(GL_VENDOR));
+    SDL_Log("GL_SHADING_LANGUAGE_VERSION: %s", glGetString(GL_SHADING_LANGUAGE_VERSION));
+
     int drawableW = 0, drawableH = 0;
     SDL_GL_GetDrawableSize(window, &drawableW, &drawableH);
     glViewport(0, 0, drawableW, drawableH);

@@ -1,5 +1,5 @@
 {
-  description = "Reproducible SDL2 + C++ HelloWorld APK for Fire HD 10 Gen7 (Fire OS 5 / Android 5.1, API 22)";
+  description = "Reproducible SDL2 + C++ HelloWorld APKs for Fire HD 10 Gen7 (Fire OS 5 / Android 5.1, API 22): a plain SDL_Renderer app and an OpenGL ES app, sharing a single Nix build pipeline";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
@@ -18,24 +18,10 @@
                                # references symbols up to API 31 (e.g. BLUETOOTH_CONNECT)
                                # behind SDK_INT/permission guards; only needed at javac time
       ndkVersion = "23.1.7779620";
-      appName = "hellogl";
       targetAbis = [ "armeabi-v7a" "arm64-v8a" ]; # Fire tablets often run a 32-bit
                                                    # userland even on 64-bit SoCs like
                                                    # the Gen7's MT8173, so build both
                                                    # and let the installer pick.
-
-      # Git metadata for the output filename, derived from the flake's own
-      # source (not wall-clock build time, so the name stays reproducible
-      # for a given commit). Needs at least one commit in the repo — see
-      # README. Falls back gracefully for an uncommitted/dirty tree.
-      gitRev =
-        if self ? shortRev then self.shortRev
-        else if self ? dirtyShortRev then self.dirtyShortRev
-        else "nogit";
-      gitDate =
-        if self ? lastModifiedDate then builtins.substring 0 8 self.lastModifiedDate
-        else "00000000";
-      outApkName = "${appName}-${gitDate}-${gitRev}.apk";
 
       sdlVersion = "2.30.3";
       sdlSrc = pkgs.fetchurl {
@@ -52,91 +38,130 @@
         includeSources = false;
       };
       androidSdk = androidComposition.androidsdk;
-    in {
-      packages.${system}.default = pkgs.stdenvNoCC.mkDerivation {
-        pname = appName;
-        version = "1.0.0";
 
-        dontUnpack = true;
-        nativeBuildInputs = [ androidSdk pkgs.jdk17 pkgs.zip pkgs.gnumake ];
+      # Git metadata for the output filename, derived from the flake's own
+      # source (not wall-clock build time, so the name stays reproducible
+      # for a given commit). Needs at least one commit in the repo — see
+      # README. Falls back gracefully for an uncommitted/dirty tree.
+      gitRev =
+        if self ? shortRev then self.shortRev
+        else if self ? dirtyShortRev then self.dirtyShortRev
+        else "nogit";
+      gitDate =
+        if self ? lastModifiedDate then builtins.substring 0 8 self.lastModifiedDate
+        else "00000000";
 
-        buildPhase = ''
-          runHook preBuild
+      # ---------------------------------------------------------------
+      # Shared build pipeline for any SDL2-based app in ./apps/<name>/:
+      #   AndroidManifest.xml, jni/Android.mk (native module), main.cpp
+      # Everything else (SDK/NDK setup, fetching + vendoring SDL2's own
+      # Java glue, javac/d8/aapt/zipalign/apksigner, ABI packaging) is
+      # identical across apps and lives here once.
+      # ---------------------------------------------------------------
+      mkApk = { appName, appDir }:
+        pkgs.stdenvNoCC.mkDerivation {
+          pname = appName;
+          version = "1.0.0";
 
-          export ANDROID_HOME=${androidSdk}/libexec/android-sdk
-          NDK=$ANDROID_HOME/ndk-bundle
-          BT=$ANDROID_HOME/build-tools/${buildToolsVersion}
-          PACKAGE_JAR=$ANDROID_HOME/platforms/android-${packagePlatform}/android.jar
-          COMPILE_JAR=$ANDROID_HOME/platforms/android-${compilePlatform}/android.jar
+          dontUnpack = true;
+          nativeBuildInputs = [ androidSdk pkgs.jdk17 pkgs.zip pkgs.gnumake ];
 
-          cp -r ${./src} src
-          chmod -R u+w src
+          buildPhase = ''
+            runHook preBuild
 
-          cp ${./keystore/debug.keystore} debug.keystore
+            export ANDROID_HOME=${androidSdk}/libexec/android-sdk
+            NDK=$ANDROID_HOME/ndk-bundle
+            BT=$ANDROID_HOME/build-tools/${buildToolsVersion}
+            PACKAGE_JAR=$ANDROID_HOME/platforms/android-${packagePlatform}/android.jar
+            COMPILE_JAR=$ANDROID_HOME/platforms/android-${compilePlatform}/android.jar
 
-          # --- unpack SDL2 and vendor it into the ndk-build project tree ---
-          mkdir -p work
-          tar xzf ${sdlSrc} -C work
-          mv work/SDL2-${sdlVersion} src/jni/SDL
+            mkdir -p src/jni/src
+            cp ${./common/jni/Application.mk} src/jni/Application.mk
+            cp ${./common/jni/Android.mk} src/jni/Android.mk
+            cp ${appDir}/jni/Android.mk src/jni/src/Android.mk
+            cp ${appDir}/main.cpp src/jni/src/main.cpp
+            cp ${appDir}/AndroidManifest.xml src/AndroidManifest.xml
+            chmod -R u+w src
 
-          # --- copy SDL's own Java glue (SDLActivity et al.) verbatim ---
-          mkdir -p javasrc
-          cp -r src/jni/SDL/android-project/app/src/main/java/org javasrc/org
-          chmod -R u+w javasrc
+            cp ${./keystore/debug.keystore} debug.keystore
 
-          # --- native build via ndk-build ---
-          $NDK/ndk-build \
-            NDK_PROJECT_PATH=$PWD/src \
-            APP_BUILD_SCRIPT=$PWD/src/jni/Android.mk \
-            NDK_APPLICATION_MK=$PWD/src/jni/Application.mk \
-            -j"$NIX_BUILD_CORES"
+            # --- unpack SDL2 and vendor it into the ndk-build project tree ---
+            mkdir -p work
+            tar xzf ${sdlSrc} -C work
+            mv work/SDL2-${sdlVersion} src/jni/SDL
 
-          # --- compile the SDL Java glue classes ---
-          mkdir -p classes
-          javac -encoding UTF-8 --release 8 -classpath "$COMPILE_JAR" -d classes \
-            $(find javasrc -name '*.java')
+            # --- copy SDL's own Java glue (SDLActivity et al.) verbatim ---
+            mkdir -p javasrc
+            cp -r src/jni/SDL/android-project/app/src/main/java/org javasrc/org
+            chmod -R u+w javasrc
 
-          $BT/d8 --output classes --min-api ${packagePlatform} $(find classes -name '*.class')
+            # --- native build via ndk-build ---
+            $NDK/ndk-build \
+              NDK_PROJECT_PATH=$PWD/src \
+              APP_BUILD_SCRIPT=$PWD/src/jni/Android.mk \
+              NDK_APPLICATION_MK=$PWD/src/jni/Application.mk \
+              -j"$NIX_BUILD_CORES"
 
-          # --- package resources + manifest ---
-          mkdir -p out
-          $BT/aapt package -f \
-            -M src/AndroidManifest.xml \
-            -I "$PACKAGE_JAR" \
-            -F out/base.apk
+            # --- compile the SDL Java glue classes ---
+            mkdir -p classes
+            javac -encoding UTF-8 --release 8 -classpath "$COMPILE_JAR" -d classes \
+              $(find javasrc -name '*.java')
 
-          # --- add dex + native libraries ---
-          cp classes/classes.dex out/classes.dex
-          for abi in ${pkgs.lib.concatStringsSep " " targetAbis}; do
-            mkdir -p out/lib/$abi
-            cp src/libs/$abi/*.so out/lib/$abi/
-          done
+            $BT/d8 --output classes --min-api ${packagePlatform} $(find classes -name '*.class')
 
-          ( cd out && $BT/aapt add base.apk classes.dex )
-          ( cd out && zip -r base.apk lib )
+            # --- package resources + manifest ---
+            mkdir -p out
+            $BT/aapt package -f \
+              -M src/AndroidManifest.xml \
+              -I "$PACKAGE_JAR" \
+              -F out/base.apk
 
-          $BT/zipalign -f 4 out/base.apk out/aligned.apk
+            # --- add dex + native libraries ---
+            cp classes/classes.dex out/classes.dex
+            for abi in ${pkgs.lib.concatStringsSep " " targetAbis}; do
+              mkdir -p out/lib/$abi
+              cp src/libs/$abi/*.so out/lib/$abi/
+            done
 
-          $BT/apksigner sign \
-            --ks debug.keystore --ks-pass pass:android --key-pass pass:android \
-            --out out/${appName}.apk out/aligned.apk
+            ( cd out && $BT/aapt add base.apk classes.dex )
+            ( cd out && zip -r base.apk lib )
 
-          $BT/aapt dump badging out/${appName}.apk
+            $BT/zipalign -f 4 out/base.apk out/aligned.apk
 
-          runHook postBuild
-        '';
+            $BT/apksigner sign \
+              --ks debug.keystore --ks-pass pass:android --key-pass pass:android \
+              --out out/${appName}.apk out/aligned.apk
 
-        installPhase = ''
-          mkdir -p $out
-          cp out/${appName}.apk $out/${outApkName}
-        '';
+            $BT/aapt dump badging out/${appName}.apk
+
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            mkdir -p $out
+            cp out/${appName}.apk $out/${appName}-${gitDate}-${gitRev}.apk
+          '';
+        };
+
+      mkInstallApp = pkg: appName: {
+        type = "app";
+        program = toString (pkgs.writeShellScript "adb-install-${appName}" ''
+          exec ${pkgs.android-tools}/bin/adb install -r ${pkg}/${appName}-${gitDate}-${gitRev}.apk
+        '');
       };
 
-      apps.${system}.install = {
-        type = "app";
-        program = toString (pkgs.writeShellScript "adb-install" ''
-          exec ${pkgs.android-tools}/bin/adb install -r ${self.packages.${system}.default}/${outApkName}
-        '');
+      hellogl = mkApk { appName = "hellogl"; appDir = ./apps/hellogl; };
+      hellosdl = mkApk { appName = "hellosdl"; appDir = ./apps/hellosdl; };
+    in {
+      packages.${system} = {
+        inherit hellogl hellosdl;
+        default = hellogl;
+      };
+
+      apps.${system} = {
+        install-hellogl = mkInstallApp hellogl "hellogl";
+        install-hellosdl = mkInstallApp hellosdl "hellosdl";
+        install = mkInstallApp hellogl "hellogl"; # default: the GL app
       };
     };
 }

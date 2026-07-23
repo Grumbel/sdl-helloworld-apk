@@ -1,23 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.helloworld"
+    package="com.example.hellosdl"
     android:versionCode="1"
     android:versionName="1.0">
 
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="22" />
 
-    <!-- App tries ES 3.1, then ES 3.0, then ES 2.0 at runtime (see main.cpp)
-         and adapts its shaders accordingly, so the hard requirement here
-         is only the true floor: ES 2.0. This only affects store-listing
-         filtering anyway (adb install ignores it). -->
     <uses-feature android:glEsVersion="0x00020000" android:required="true" />
     <uses-feature
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
-    <application android:label="HelloGL" android:allowBackup="false" android:hasCode="true">
+    <application android:label="HelloSDL" android:allowBackup="false" android:hasCode="true">
         <activity android:name="org.libsdl.app.SDLActivity"
-            android:label="HelloGL"
+            android:label="HelloSDL"
             android:configChanges="orientation|keyboardHidden|screenSize"
             android:launchMode="singleTask"
             android:exported="true">
