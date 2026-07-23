@@ -49,10 +49,10 @@ unknown sources / ADB.
 
 ## What the app does
 
-- Opens a fullscreen SDL2 window with a direct **OpenGL ES 3.0** context
+- Opens a fullscreen SDL2 window with a direct **OpenGL ES 3.1** context
   (`SDL_GL_CreateContext`, not `SDL_CreateRenderer` — SDL is only used for
   windowing/input/context management here, all drawing is raw GL).
-- Logs `"Hello, World! from SDL2 + OpenGL ES 3.0 + C++ on Android"` via
+- Logs `"Hello, World! from SDL2 + OpenGL ES 3.1 + C++ on Android"` via
   `SDL_Log` (visible with `adb logcat -s SDL`).
 - Draws a per-vertex-colored cube (own VAO/VBO/EBO, own GLSL ES 300 vertex
   and fragment shaders, indexed `glDrawElements` draw call, depth testing
@@ -64,6 +64,20 @@ unknown sources / ADB.
 
 ## Design notes / why things are set up this way
 
+- **Requesting ES 3.1, not 3.0**: SDL's EGL code has two paths for
+  creating a GLES context. With `minorVersion == 0` (a plain "3.0"
+  request), it takes a legacy shortcut and just passes
+  `EGL_CONTEXT_CLIENT_VERSION=3` to `eglCreateContext`. The Fire HD 10
+  Gen7's PowerVR (GX6250) EGL driver rejects that specific call with
+  `EGL_BAD_ATTRIBUTE`, even though the GPU fully supports ES3. Requesting
+  minor version 1 forces SDL through its other path — explicit
+  `EGL_CONTEXT_MAJOR/MINOR_VERSION_KHR` attributes via the
+  `EGL_KHR_create_context` extension — which this driver handles
+  correctly. Everything the app actually uses (VAOs, `glDrawElements`,
+  GLSL ES 300 shaders) is ES 3.0-core; nothing here depends on 3.1-only
+  features, this is purely a context-creation workaround for a driver bug.
+  If you port this to hardware without the bug, dropping back to
+  `SDL_GL_CONTEXT_MINOR_VERSION = 0` should work identically.
 - **Output filename**: `hellogl-<YYYYMMDD>-<gitshortrev>.apk`. The date and
   rev come from the flake's own git metadata (`self.shortRev` /
   `self.dirtyShortRev`, `self.lastModifiedDate`) — the *commit's* date, not

@@ -151,7 +151,7 @@ static const GLushort kCubeIndices[] = {
 };
 
 int main(int argc, char *argv[]) {
-    SDL_Log("Hello, World! from SDL2 + OpenGL ES 3.0 + C++ on Android");
+    SDL_Log("Hello, World! from SDL2 + OpenGL ES 3.1 + C++ on Android");
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
@@ -160,7 +160,15 @@ int main(int argc, char *argv[]) {
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    // Minor version 1 (not 0) is deliberate: with minor==0, SDL's EGL code
+    // takes a "simple" path that just passes EGL_CONTEXT_CLIENT_VERSION=3
+    // to eglCreateContext. This Fire tablet's PowerVR EGL driver rejects
+    // that with EGL_BAD_ATTRIBUTE. Requesting 3.1 forces SDL through the
+    // EGL_KHR_create_context extended-attribute path instead (explicit
+    // EGL_CONTEXT_MAJOR/MINOR_VERSION_KHR), which this driver accepts.
+    // Everything this app uses is ES 3.0-core; the GX6250 GPU here
+    // supports up to ES 3.1 anyway.
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
