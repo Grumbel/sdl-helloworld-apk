@@ -62,12 +62,18 @@ static void mat4Perspective(float fovyRadians, float aspect, float nearZ, float 
 }
 
 // ---------------------------------------------------------------------
-// Shader sources (GLSL ES 3.00)
+// Shader sources: an ES 3.00 variant and an ES 2.0 (GLSL ES 100) fallback
+// variant, selected at runtime based on which GL context we actually
+// managed to get (see the context-creation retry loop in main()).
+// Attribute locations are pinned via glBindAttribLocation in buildProgram
+// rather than "layout(location=...)" so both variants share that logic;
+// an explicit layout qualifier (if present) always wins over
+// glBindAttribLocation, so it's harmless to call it unconditionally.
 // ---------------------------------------------------------------------
-static const char *kVertexShaderSrc =
+static const char *kVertexShaderSrcES3 =
     "#version 300 es\n"
-    "layout(location = 0) in vec3 aPos;\n"
-    "layout(location = 1) in vec3 aColor;\n"
+    "in vec3 aPos;\n"
+    "in vec3 aColor;\n"
     "uniform mat4 uMVP;\n"
     "out vec3 vColor;\n"
     "void main() {\n"
@@ -75,13 +81,30 @@ static const char *kVertexShaderSrc =
     "    vColor = aColor;\n"
     "}\n";
 
-static const char *kFragmentShaderSrc =
+static const char *kFragmentShaderSrcES3 =
     "#version 300 es\n"
     "precision mediump float;\n"
     "in vec3 vColor;\n"
     "out vec4 fragColor;\n"
     "void main() {\n"
     "    fragColor = vec4(vColor, 1.0);\n"
+    "}\n";
+
+static const char *kVertexShaderSrcES2 =
+    "attribute vec3 aPos;\n"
+    "attribute vec3 aColor;\n"
+    "uniform mat4 uMVP;\n"
+    "varying vec3 vColor;\n"
+    "void main() {\n"
+    "    gl_Position = uMVP * vec4(aPos, 1.0);\n"
+    "    vColor = aColor;\n"
+    "}\n";
+
+static const char *kFragmentShaderSrcES2 =
+    "precision mediump float;\n"
+    "varying vec3 vColor;\n"
+    "void main() {\n"
+    "    gl_FragColor = vec4(vColor, 1.0);\n"
     "}\n";
 
 static GLuint compileShader(GLenum type, const char *src) {
@@ -109,6 +132,8 @@ static GLuint buildProgram(const char *vsSrc, const char *fsSrc) {
     GLuint program = glCreateProgram();
     glAttachShader(program, vs);
     glAttachShader(program, fs);
+    glBindAttribLocation(program, 0, "aPos");
+    glBindAttribLocation(program, 1, "aColor");
     glLinkProgram(program);
 
     GLint linked = GL_FALSE;
@@ -150,25 +175,27 @@ static const GLushort kCubeIndices[] = {
     3, 2, 6,  6, 7, 3,  // top
 };
 
+// Context versions to try, in order. Some Android GL drivers (seen in the
+// wild on this exact device) reject a plain "ES 3.0" request via SDL's
+// simple EGL_CONTEXT_CLIENT_VERSION path, AND don't support the
+// EGL_KHR_create_context extension SDL would otherwise use for 3.1+. So we
+// just try everything reasonable and adapt (GLSL version, VAO usage) to
+// whichever one actually succeeds, rather than hard-requiring ES3.
+struct ContextAttempt { int major; int minor; const char *label; };
+static const ContextAttempt kAttempts[] = {
+    { 3, 1, "OpenGL ES 3.1" },
+    { 3, 0, "OpenGL ES 3.0" },
+    { 2, 0, "OpenGL ES 2.0" },
+};
+
 int main(int argc, char *argv[]) {
-    SDL_Log("Hello, World! from SDL2 + OpenGL ES 3.1 + C++ on Android");
+    SDL_Log("Hello, World! from SDL2 + OpenGL ES + C++ on Android");
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return 1;
     }
 
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    // Minor version 1 (not 0) is deliberate: with minor==0, SDL's EGL code
-    // takes a "simple" path that just passes EGL_CONTEXT_CLIENT_VERSION=3
-    // to eglCreateContext. This Fire tablet's PowerVR EGL driver rejects
-    // that with EGL_BAD_ATTRIBUTE. Requesting 3.1 forces SDL through the
-    // EGL_KHR_create_context extended-attribute path instead (explicit
-    // EGL_CONTEXT_MAJOR/MINOR_VERSION_KHR), which this driver accepts.
-    // Everything this app uses is ES 3.0-core; the GX6250 GPU here
-    // supports up to ES 3.1 anyway.
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
@@ -183,13 +210,28 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    SDL_GLContext glContext = SDL_GL_CreateContext(window);
+    SDL_GLContext glContext = nullptr;
+    int gotMajor = 0;
+    for (const auto &attempt : kAttempts) {
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, attempt.major);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, attempt.minor);
+        glContext = SDL_GL_CreateContext(window);
+        if (glContext) {
+            SDL_Log("Created %s context", attempt.label);
+            gotMajor = attempt.major;
+            break;
+        }
+        SDL_Log("Requesting %s failed: %s", attempt.label, SDL_GetError());
+    }
+
     if (!glContext) {
-        SDL_Log("SDL_GL_CreateContext failed: %s", SDL_GetError());
+        SDL_Log("Could not create any GL context");
         SDL_DestroyWindow(window);
         SDL_Quit();
         return 1;
     }
+    bool haveES3 = (gotMajor >= 3);
     SDL_GL_SetSwapInterval(1); // vsync paces the loop
 
     int drawableW = 0, drawableH = 0;
@@ -197,7 +239,8 @@ int main(int argc, char *argv[]) {
     glViewport(0, 0, drawableW, drawableH);
     glEnable(GL_DEPTH_TEST);
 
-    GLuint program = buildProgram(kVertexShaderSrc, kFragmentShaderSrc);
+    GLuint program = buildProgram(haveES3 ? kVertexShaderSrcES3 : kVertexShaderSrcES2,
+                                   haveES3 ? kFragmentShaderSrcES3 : kFragmentShaderSrcES2);
     if (!program) {
         SDL_Log("Failed to build shader program");
         SDL_GL_DeleteContext(glContext);
@@ -207,12 +250,13 @@ int main(int argc, char *argv[]) {
     }
     GLint mvpLoc = glGetUniformLocation(program, "uMVP");
 
-    GLuint vao = 0, vbo = 0, ebo = 0;
-    glGenVertexArrays(1, &vao);
+    // No VAO here on purpose: VAOs are ES3-only, and this app may have
+    // fallen back to an ES2 context above. We only ever draw one object
+    // with one buffer layout, so binding the buffers + attrib pointers
+    // once, up front, is sufficient — no need to rebind per frame.
+    GLuint vbo = 0, ebo = 0;
     glGenBuffers(1, &vbo);
     glGenBuffers(1, &ebo);
-
-    glBindVertexArray(vao);
 
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(kCubeVertices), kCubeVertices, GL_STATIC_DRAW);
@@ -225,8 +269,6 @@ int main(int argc, char *argv[]) {
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void *)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
-
-    glBindVertexArray(0);
 
     // Cube bounces within this box (world units, camera looking down -Z).
     const float boundX = 1.6f, boundY = 1.0f;
@@ -292,17 +334,14 @@ int main(int argc, char *argv[]) {
         glUseProgram(program);
         glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, mvp);
 
-        glBindVertexArray(vao);
         glDrawElements(GL_TRIANGLES, (GLsizei)(sizeof(kCubeIndices) / sizeof(kCubeIndices[0])),
                         GL_UNSIGNED_SHORT, 0);
-        glBindVertexArray(0);
 
         SDL_GL_SwapWindow(window);
     }
 
     glDeleteBuffers(1, &vbo);
     glDeleteBuffers(1, &ebo);
-    glDeleteVertexArrays(1, &vao);
     glDeleteProgram(program);
     SDL_GL_DeleteContext(glContext);
     SDL_DestroyWindow(window);
