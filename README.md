@@ -49,10 +49,16 @@ unknown sources / ADB.
 
 ## What the app does
 
-- Opens a fullscreen SDL2 window + accelerated renderer (GLES2 backend).
-- Logs `"Hello, World! from SDL2 + C++ on Android"` via `SDL_Log`
-  (visible with `adb logcat -s SDL`).
-- Animates a bouncing rectangle to prove the render loop is alive.
+- Opens a fullscreen SDL2 window with a direct **OpenGL ES 3.0** context
+  (`SDL_GL_CreateContext`, not `SDL_CreateRenderer` — SDL is only used for
+  windowing/input/context management here, all drawing is raw GL).
+- Logs `"Hello, World! from SDL2 + OpenGL ES 3.0 + C++ on Android"` via
+  `SDL_Log` (visible with `adb logcat -s SDL`).
+- Draws a per-vertex-colored cube (own VAO/VBO/EBO, own GLSL ES 300 vertex
+  and fragment shaders, indexed `glDrawElements` draw call, depth testing
+  enabled) that spins continuously around two axes while bouncing around
+  the screen, with a small hand-rolled matrix library (translate/rotate/
+  perspective) driving the MVP uniform — no external math dependency.
 - Logs touch coordinates on finger-down.
 - Exits cleanly on the Android back button or `SDL_QUIT`.
 

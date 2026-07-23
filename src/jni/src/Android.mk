@@ -12,7 +12,7 @@ LOCAL_SRC_FILES := main.cpp
 
 LOCAL_SHARED_LIBRARIES := SDL2
 
-LOCAL_LDLIBS := -lGLESv1_CM -lGLESv2 -lOpenSLES -llog -landroid
+LOCAL_LDLIBS := -lGLESv3 -llog -landroid
 
 LOCAL_CPP_FEATURES := exceptions
 
