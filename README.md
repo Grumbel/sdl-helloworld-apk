@@ -85,7 +85,11 @@ unknown sources / ADB.
 
 Both apps' `main.cpp` are plain portable SDL2/C++ (nothing Android-specific
 in either one), so they also build as regular native Linux binaries — handy
-for quick iteration without a tablet or emulator in the loop:
+for quick iteration without a tablet or emulator in the loop. The one
+difference from the Android build: an `#ifdef __ANDROID__` (predefined by
+the NDK toolchain, absent on desktop) picks fullscreen on Android and a
+plain 800×600 window on desktop, since a fullscreen SDL window makes far
+less sense for a quick `nix run` on a desktop.
 
 ```bash
 nix build .#hellosdl-linux && nix run .#run-hellosdl-linux

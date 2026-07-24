@@ -199,11 +199,19 @@ int main(int argc, char *argv[]) {
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
+#ifdef __ANDROID__
+    const int kWinW = 0, kWinH = 0; // fullscreen sizes itself
+    const Uint32 kWinFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_SHOWN;
+#else
+    const int kWinW = 800, kWinH = 600;
+    const Uint32 kWinFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN;
+#endif
+
     SDL_Window *window = SDL_CreateWindow(
         "HelloGL",
         SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-        0, 0,
-        SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_SHOWN);
+        kWinW, kWinH,
+        kWinFlags);
     if (!window) {
         SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
         SDL_Quit();
