@@ -81,6 +81,29 @@ Enable Developer Options on the tablet (tap "Serial Number" 7x in
 Settings > Device Options), turn on ADB debugging, and allow installs from
 unknown sources / ADB.
 
+## Desktop NixOS/Linux build (no device needed)
+
+Both apps' `main.cpp` are plain portable SDL2/C++ (nothing Android-specific
+in either one), so they also build as regular native Linux binaries — handy
+for quick iteration without a tablet or emulator in the loop:
+
+```bash
+nix build .#hellosdl-linux && nix run .#run-hellosdl-linux
+nix build .#hellogl-linux  && nix run .#run-hellogl-linux
+# or just: nix run .#run-hellosdl-linux / .#run-hellogl-linux directly
+```
+
+`hellosdl-linux` only needs SDL2 and should just work. `hellogl-linux`
+additionally needs `libglvnd` for `GLES3/gl3.h` and a GLES dispatch
+library — present on any NixOS desktop with OpenGL configured
+(`hardware.graphics.enable = true;` — formerly `hardware.opengl.enable`).
+Whether it actually gets an ES context depends on your windowing backend:
+Wayland's EGL-native path tends to negotiate ES contexts more reliably
+than X11's default GLX path. If `hellogl-linux` logs all three context
+attempts failing, try forcing EGL on X11 first:
+`SDL_VIDEO_X11_FORCE_EGL=1 nix run .#run-hellogl-linux`. Either way, the
+same ES 3.1 → 3.0 → 2.0 fallback ladder described below applies here too.
+
 ## What each app does
 
 **`hellosdl`**: opens a fullscreen `SDL_Renderer` (accelerated), logs a

@@ -221,11 +221,56 @@
         '');
       };
 
+      # ---------------------------------------------------------------
+      # Desktop NixOS/Linux build of the same main.cpp files (unmodified —
+      # nothing in either app is Android-specific), for quick iteration
+      # without a device/emulator in the loop. hellosdl only needs SDL2;
+      # hellogl additionally needs GLES3 headers + a dispatch library,
+      # which libglvnd provides on desktop (note: the lib there is named
+      # libGLESv2.so — desktop libglvnd has no separate libGLESv3.so the
+      # way the Android NDK does, even though it exports GLES3 entry
+      # points too).
+      # ---------------------------------------------------------------
+      mkDesktopApp = { appName, appDir, extraBuildInputs ? [], extraLdFlags ? [] }:
+        pkgs.stdenv.mkDerivation {
+          pname = "${appName}-linux";
+          version = "1.0.0";
+
+          dontUnpack = true;
+          nativeBuildInputs = [ pkgs.pkg-config ];
+          buildInputs = [ pkgs.SDL2 ] ++ extraBuildInputs;
+
+          buildPhase = ''
+            runHook preBuild
+            $CXX -std=c++17 -O2 -Wall -Wextra \
+              ${appDir}/main.cpp \
+              $(pkg-config --cflags --libs sdl2) \
+              ${pkgs.lib.concatStringsSep " " extraLdFlags} \
+              -o ${appName}
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            mkdir -p $out/bin
+            cp ${appName} $out/bin/
+          '';
+        };
+
       hellogl = mkApk { appName = "hellogl"; appDir = ./apps/hellogl; };
       hellosdl = mkApk { appName = "hellosdl"; appDir = ./apps/hellosdl; };
+
+      hellosdlLinux = mkDesktopApp { appName = "hellosdl"; appDir = ./apps/hellosdl; };
+      helloglLinux = mkDesktopApp {
+        appName = "hellogl";
+        appDir = ./apps/hellogl;
+        extraBuildInputs = [ pkgs.libglvnd ];
+        extraLdFlags = [ "-lGLESv2" ];
+      };
     in {
       packages.${system} = {
         inherit hellogl hellosdl sdlAndroidLibs;
+        hellosdl-linux = hellosdlLinux;
+        hellogl-linux = helloglLinux;
         default = hellogl;
       };
 
@@ -233,6 +278,15 @@
         install-hellogl = mkInstallApp hellogl "hellogl";
         install-hellosdl = mkInstallApp hellosdl "hellosdl";
         install = mkInstallApp hellogl "hellogl"; # default: the GL app
+
+        run-hellosdl-linux = {
+          type = "app";
+          program = "${hellosdlLinux}/bin/hellosdl";
+        };
+        run-hellogl-linux = {
+          type = "app";
+          program = "${helloglLinux}/bin/hellogl";
+        };
       };
     };
 }
